@@ -1,0 +1,158 @@
+!wget -N https://raw.githubusercontent.com/opencv/opencv/master/samples/dnn/face_detector/deploy.prototxt
+!wget -N https://raw.githubusercontent.com/opencv/opencv_3rdparty/dnn_samples_face_detector_20170830/res10_300x300_ssd_iter_140000.caffemodel
+
+
+# Google Driveをマウントしてファイルにアクセスできるようにする
+from google.colab import drive
+drive.mount('/content/gdrive')
+
+# OpenCVのimshow機能をColabでサポートするパッチ
+from google.colab.patches import cv2_imshow
+
+# DNN(Deep Neural Network)用のライブラリなどをインポート
+from IPython.display import display, Javascript
+from google.colab.output import eval_js
+from base64 import b64decode
+
+# 画像処理や計算、可視化のためのパッケージ
+import imutils
+import numpy as np
+import matplotlib.pyplot as plt
+import cv2
+
+import IPython
+from google.colab import output
+from PIL import Image
+from io import BytesIO
+import base64
+
+# 顔検出を行う関数
+def face_detection(_img):
+	# 入力画像を幅400ピクセルにリサイズ
+	_img = imutils.resize(_img, width=400)
+	(h, w) = _img.shape[:2]
+
+	# DNN用に画像をblob（データバッチ）に変換し、検出に利用する
+	blob = cv2.dnn.blobFromImage(cv2.resize(_img, (300, 300)), 1.0, (300, 300), (104.0, 177.0, 123.0))
+
+	# DNNモデルにblobを入力して顔の検出を行う
+	net.setInput(blob)
+	detections = net.forward()
+
+	# 検出された領域の中で、confidenceが0.5以上の領域にバウンディングボックスを描画
+	for i in range(0, detections.shape[2]):
+		# 検出結果の信頼度を取得
+		confidence = detections[0, 0, i, 2]
+		if confidence > 0.5:
+			# バウンディングボックスの座標を計算し、描画
+			box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
+			(startX, startY, endX, endY) = box.astype("int")
+			text = "{:.2f}%".format(confidence * 100)
+			y = startY - 10 if startY - 10 > 10 else startY + 10
+			cv2.rectangle(_img, (startX, startY), (endX, endY), (0, 0, 255), 2)
+			cv2.putText(_img, text, (startX, y), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 255), 2)
+	return _img
+
+# JavaScriptから受け取ったBase64画像をデコードし、顔検出後の画像を再エンコードして返す関数
+def run(img_str):
+    # Base64文字列を画像にデコード
+    decimg = base64.b64decode(img_str.split(',')[1], validate=True)
+    decimg = Image.open(BytesIO(decimg))
+    decimg = np.array(decimg, dtype=np.uint8)
+    decimg = cv2.cvtColor(decimg, cv2.COLOR_BGR2RGB)
+
+    # 顔検出を実行
+    out_img = face_detection(decimg)
+
+    # 出力画像をJPEG形式にエンコードしてBase64文字列に変換
+    _, encimg = cv2.imencode(".jpg", out_img, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+    img_str = "data:image/jpeg;base64," + base64.b64encode(encimg).decode('utf-8')
+    return IPython.display.JSON({'img_str': img_str})
+
+# run関数をJavaScriptから呼び出せるようにColabに登録
+output.register_callback('notebook.run', run)
+
+# Webカメラ映像を取得し、顔検出結果を表示する関数
+def use_cam(quality=0.5):
+  # JavaScriptコードでWebカメラ映像を取得して、顔検出結果を表示
+  js = Javascript('''
+    async function useCam(quality) {
+      const div = document.createElement('div');
+      document.body.appendChild(div);
+
+      // Webカメラ映像を取得するためのvideo要素を作成
+      const video = document.createElement('video');
+      video.style.display = 'None';
+      const stream = await navigator.mediaDevices.getUserMedia({video: true});
+      div.appendChild(video);
+      video.srcObject = stream;
+      await video.play();
+
+      // 映像を表示するためのcanvas要素を設定
+      display_size = 500 
+      const src_canvas = document.createElement('canvas');
+      src_canvas.width  = display_size;
+      src_canvas.height = display_size * video.videoHeight / video.videoWidth;
+      const src_canvasCtx = src_canvas.getContext('2d');
+      src_canvasCtx.translate(src_canvas.width, 0);
+      src_canvasCtx.scale(-1, 1);  // ミラー表示
+      div.appendChild(src_canvas);
+
+      // 処理結果を表示するためのcanvasを設定
+      const dst_canvas = document.createElement('canvas');
+      dst_canvas.width  = src_canvas.width;
+      dst_canvas.height = src_canvas.height;
+      const dst_canvasCtx = dst_canvas.getContext('2d');
+      //div.appendChild(dst_canvas);
+
+      // 終了ボタンを追加
+      const btn_div = document.createElement('div');
+      document.body.appendChild(btn_div);
+      const exit_btn = document.createElement('button');
+      exit_btn.textContent = 'Exit';
+      var exit_flg = true;
+      exit_btn.onclick = function() {exit_flg = false};
+      btn_div.appendChild(exit_btn);
+
+      // Colabでスクロールを調整
+      google.colab.output.setIframeHeight(document.documentElement.scrollHeight, true);
+
+      var send_num = 0;  // Webカメラの映像を処理するためのカウンタ
+
+      // Webカメラ映像を取得して、顔検出処理を行うループ
+      _canvasUpdate();
+      async function _canvasUpdate() {
+            src_canvasCtx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight, 0, 0, src_canvas.width, src_canvas.height);     
+            if (send_num < 1) {
+                send_num += 1;
+                const img = src_canvas.toDataURL('image/jpeg', quality);
+                const result = google.colab.kernel.invokeFunction('notebook.run', [img], {});
+                result.then(function(value) {
+                    parse = JSON.parse(JSON.stringify(value))["data"];
+                    parse = JSON.parse(JSON.stringify(parse))["application/json"];
+                    parse = JSON.parse(JSON.stringify(parse))["img_str"];
+                    var image = new Image();
+                    image.src = parse;
+                    image.onload = function(){dst_canvasCtx.drawImage(image, 0, 0)}
+                    send_num -= 1;
+                });
+            }
+            if (exit_flg) {
+                requestAnimationFrame(_canvasUpdate);
+            } else {
+                stream.getVideoTracks()[0].stop();  // Webカメラ映像の停止
+            }
+      };
+    }
+    ''')
+  display(js)
+  data = eval_js('useCam({})'.format(quality))
+
+# DNNモデルと学習済みの重みをロードして初期化
+print("[INFO] loading model...")
+prototxt = 'deploy.prototxt'
+model = 'res10_300x300_ssd_iter_140000.caffemodel'
+net = cv2.dnn.readNetFromCaffe(prototxt, model)
+
+# Webカメラを起動して顔検出処理を開始
+use_cam()
