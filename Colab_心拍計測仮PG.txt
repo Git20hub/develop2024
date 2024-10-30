@@ -1,0 +1,80 @@
+# Google Colabでリアルタイムのカメラ映像を取得し、心拍数を表示するためのコード
+
+# JavaScriptを使ってウェブカメラにアクセスする関数
+def use_cam():
+    from IPython.display import display, Javascript
+
+    js = Javascript('''
+    async function useCam() {
+        // ウェブカメラを取得するためのdiv要素を作成
+        const div = document.createElement('div');
+        document.body.appendChild(div);
+
+        // ウェブカメラ映像を表示するためのvideo要素を作成
+        const video = document.createElement('video');
+        video.style.display = 'block';  // 映像を表示
+        const stream = await navigator.mediaDevices.getUserMedia({video: true});
+        div.appendChild(video);
+        video.srcObject = stream;
+        await video.play();
+
+        // ウェブカメラ映像を取得して表示する
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        div.appendChild(canvas);
+
+        // 心拍数を表示するためのspan要素
+        const heartRateSpan = document.createElement('span');
+        heartRateSpan.style.fontSize = '24px';
+        heartRateSpan.style.display = 'block';
+        div.appendChild(heartRateSpan);
+
+        // シンプルな心拍数計算のための変数
+        let heartRate = 0;
+        let lastTime = Date.now();
+
+        function updateCanvas() {
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            
+            // ここで心拍数の計算を行う
+            // 簡易的にビデオフレームの赤の値を使って心拍数をシミュレート
+            let frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            let data = frame.data;
+            let rSum = 0, gSum = 0, bSum = 0;
+
+            for (let i = 0; i < data.length; i += 4) {
+                rSum += data[i];     // Red
+                gSum += data[i + 1]; // Green
+                bSum += data[i + 2]; // Blue
+            }
+
+            let avgR = rSum / (data.length / 4);
+            let avgG = gSum / (data.length / 4);
+            let avgB = bSum / (data.length / 4);
+            
+            // ビデオフレームの赤色値から心拍数を計算（単純化したモデル）
+            if (avgR > avgG + 20) { // 赤色が優位な場合
+                heartRate += 1;
+            }
+
+            // 1秒ごとに心拍数を更新
+            if (Date.now() - lastTime > 1000) {
+                heartRateSpan.textContent = 'Heart Rate: ' + heartRate + ' bpm';
+                heartRate = 0; // リセット
+                lastTime = Date.now();
+            }
+
+            requestAnimationFrame(updateCanvas);
+        }
+
+        // キャンバスの更新を開始
+        updateCanvas();
+    }
+    useCam();
+    ''')
+
+    # JavaScriptコードを実行してカメラを起動
+    display(js)
+
+# ウェブカメラを起動する
+use_cam()
